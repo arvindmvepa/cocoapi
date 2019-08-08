@@ -190,49 +190,6 @@ class COCOeval:
         ious = maskUtils.iou(d,g,iscrowd)
         return ious
 
-    def computeOks(self, imgId, catId):
-        p = self.params
-        # dimention here should be Nxm
-        gts = self._gts[imgId, catId]
-        dts = self._dts[imgId, catId]
-        inds = np.argsort([-d['score'] for d in dts], kind='mergesort')
-        dts = [dts[i] for i in inds]
-        if len(dts) > p.maxDets[-1]:
-            dts = dts[0:p.maxDets[-1]]
-        # if len(gts) == 0 and len(dts) == 0:
-        if len(gts) == 0 or len(dts) == 0:
-            return []
-        ious = np.zeros((len(dts), len(gts)))
-        sigmas = np.array([.26, .25, .25, .35, .35, .79, .79, .72, .72, .62,.62, 1.07, 1.07, .87, .87, .89, .89])/10.0
-        vars = (sigmas * 2)**2
-        k = len(sigmas)
-        # compute oks between each detection and ground truth object
-        for j, gt in enumerate(gts):
-            # create bounds for ignore regions(double the gt bbox)
-            g = np.array(gt['keypoints'])
-            xg = g[0::3]; yg = g[1::3]; vg = g[2::3]
-            k1 = np.count_nonzero(vg > 0)
-            bb = gt['bbox']
-            x0 = bb[0] - bb[2]; x1 = bb[0] + bb[2] * 2
-            y0 = bb[1] - bb[3]; y1 = bb[1] + bb[3] * 2
-            for i, dt in enumerate(dts):
-                d = np.array(dt['keypoints'])
-                xd = d[0::3]; yd = d[1::3]
-                if k1>0:
-                    # measure the per-keypoint distance if keypoints visible
-                    dx = xd - xg
-                    dy = yd - yg
-                else:
-                    # measure minimum distance to keypoints in (x0,y0) & (x1,y1)
-                    z = np.zeros((k))
-                    dx = np.max((z, x0-xd),axis=0)+np.max((z, xd-x1),axis=0)
-                    dy = np.max((z, y0-yd),axis=0)+np.max((z, yd-y1),axis=0)
-                e = (dx**2 + dy**2) / vars / (gt['area']+np.spacing(1)) / 2
-                if k1 > 0:
-                    e=e[vg > 0]
-                ious[i, j] = np.sum(np.exp(-e)) / e.shape[0]
-        return ious
-
     def evaluateImg(self, imgId, catId, aRng, maxDet):
         '''
         perform evaluation for single category and image
@@ -313,6 +270,7 @@ class COCOeval:
                 'dtIgnore':     dtIg,
             }
 
+
     def accumulate(self, p = None):
         '''
         Accumulate per image evaluation results and store the result in self.eval
@@ -327,14 +285,16 @@ class COCOeval:
         if p is None:
             p = self.params
         p.catIds = p.catIds if p.useCats == 1 else [-1]
-        T           = len(p.iouThrs)
-        R           = len(p.recThrs)
-        K           = len(p.catIds) if p.useCats else 1
-        A           = len(p.areaRng)
-        M           = len(p.maxDets)
-        precision   = -np.ones((T,R,K,A,M)) # -1 for the precision of absent categories
-        recall      = -np.ones((T,K,A,M))
-        scores      = -np.ones((T,R,K,A,M))
+        T = len(p.iouThrs)
+        R = len(p.recThrs)
+        K = len(p.catIds) if p.useCats else 1
+        A  = len(p.areaRng)
+        M = len(p.maxDets)
+
+        precision = -np.ones((T,R,K,A,M)) # -1 for the precision of absent categories
+        precision_ = -np.ones((T, R, K, A, M))
+        recall = -np.ones((T,K,A,M))
+        scores = -np.ones((T,R,K,A,M))
 
         # create dictionary for future indexing
         _pe = self._paramsEval
@@ -378,42 +338,67 @@ class COCOeval:
 
                     tp_sum = np.cumsum(tps, axis=1).astype(dtype=np.float)
                     fp_sum = np.cumsum(fps, axis=1).astype(dtype=np.float)
+                    # each, tp, fp sum is culmutative sum over some threshold? I think so. Double check
+                    # I think it's per IOU threshold and culmutative over the score threshold
                     for t, (tp, fp) in enumerate(zip(tp_sum, fp_sum)):
                         tp = np.array(tp)
                         fp = np.array(fp)
                         nd = len(tp)
+                        # all recall values up to a threshold
                         rc = tp / npig
+                        # all precision values up to a threshold
                         pr = tp / (fp+tp+np.spacing(1))
+
+                        # based on # of recall thresholds
                         q  = np.zeros((R,))
                         ss = np.zeros((R,))
 
                         if nd:
+                            # the largest recall value, or the
                             recall[t,k,a,m] = rc[-1]
                         else:
                             recall[t,k,a,m] = 0
 
                         # numpy is slow without cython optimization for accessing elements
                         # use python array gets significant speed improvement
-                        pr = pr.tolist(); q = q.tolist()
+                        pr_ = pr.tolist()
+                        pr = pr.tolist()
+                        q_ = q.tolist()
+                        q = q.tolist()
+
+                        # tries to find best always optimistic precision - can remove
 
                         for i in range(nd-1, 0, -1):
                             if pr[i] > pr[i-1]:
                                 pr[i-1] = pr[i]
 
+                        # this finds recall thresholds based on those chosen
                         inds = np.searchsorted(rc, p.recThrs, side='left')
+
+                        # finds all precision/score values for the recall thresholds
                         try:
                             for ri, pi in enumerate(inds):
                                 q[ri] = pr[pi]
+                                q_[ri] = pr_[pi]
                                 ss[ri] = dtScoresSorted[pi]
                         except:
                             pass
+                        # precision and score values saved
+                        # precision and score cut-off useful
+                        # recall is implied based on the indices
                         precision[t,:,k,a,m] = np.array(q)
+                        precision_[t, :, k, a, m] = np.array(q_)
                         scores[t,:,k,a,m] = np.array(ss)
+        # best thing would be to access this dict entry
+        # keep the mAP and create a new entry for new types of precision
+        # precision values are useful
+        # score values are also useful
         self.eval = {
             'params': p,
             'counts': [T, R, K, A, M],
             'date': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             'precision': precision,
+            'precision_': precision_,
             'recall':   recall,
             'scores': scores,
         }
@@ -457,40 +442,32 @@ class COCOeval:
             print(iStr.format(titleStr, typeStr, iouStr, areaRng, maxDets, mean_s))
             return mean_s
         def _summarizeDets():
-            stats = np.zeros((12,))
+            stats = np.zeros((19,))
             stats[0] = _summarize(1)
-            stats[1] = _summarize(1, iouThr=.5, maxDets=self.params.maxDets[2])
-            stats[2] = _summarize(1, iouThr=.75, maxDets=self.params.maxDets[2])
-            stats[3] = _summarize(1, areaRng='small', maxDets=self.params.maxDets[2])
-            stats[4] = _summarize(1, areaRng='medium', maxDets=self.params.maxDets[2])
-            stats[5] = _summarize(1, areaRng='large', maxDets=self.params.maxDets[2])
-            stats[6] = _summarize(0, maxDets=self.params.maxDets[0])
-            stats[7] = _summarize(0, maxDets=self.params.maxDets[1])
-            stats[8] = _summarize(0, maxDets=self.params.maxDets[2])
-            stats[9] = _summarize(0, areaRng='small', maxDets=self.params.maxDets[2])
-            stats[10] = _summarize(0, areaRng='medium', maxDets=self.params.maxDets[2])
-            stats[11] = _summarize(0, areaRng='large', maxDets=self.params.maxDets[2])
-            return stats
-        def _summarizeKps():
-            stats = np.zeros((10,))
-            stats[0] = _summarize(1, maxDets=20)
-            stats[1] = _summarize(1, maxDets=20, iouThr=.5)
-            stats[2] = _summarize(1, maxDets=20, iouThr=.75)
-            stats[3] = _summarize(1, maxDets=20, areaRng='medium')
-            stats[4] = _summarize(1, maxDets=20, areaRng='large')
-            stats[5] = _summarize(0, maxDets=20)
-            stats[6] = _summarize(0, maxDets=20, iouThr=.5)
-            stats[7] = _summarize(0, maxDets=20, iouThr=.75)
-            stats[8] = _summarize(0, maxDets=20, areaRng='medium')
-            stats[9] = _summarize(0, maxDets=20, areaRng='large')
+            stats[1] = _summarize(1, iouThr=.10, maxDets=self.params.maxDets[2])
+            stats[2] = _summarize(1, iouThr=.20, maxDets=self.params.maxDets[2])
+            stats[3] = _summarize(1, iouThr=.30, maxDets=self.params.maxDets[2])
+            stats[4] = _summarize(1, iouThr=.40, maxDets=self.params.maxDets[2])
+            stats[5] = _summarize(1, iouThr=.5, maxDets=self.params.maxDets[2])
+            stats[6] = _summarize(1, iouThr=.60, maxDets=self.params.maxDets[2])
+            stats[7] = _summarize(1, iouThr=.70, maxDets=self.params.maxDets[2])
+            stats[8] = _summarize(1, iouThr=.80, maxDets=self.params.maxDets[2])
+            stats[9] = _summarize(1, iouThr=.90, maxDets=self.params.maxDets[2])
+            stats[10] = _summarize(1, areaRng='small', maxDets=self.params.maxDets[2])
+            stats[11] = _summarize(1, areaRng='medium', maxDets=self.params.maxDets[2])
+            stats[12] = _summarize(1, areaRng='large', maxDets=self.params.maxDets[2])
+            stats[13] = _summarize(0, maxDets=self.params.maxDets[0])
+            stats[14] = _summarize(0, maxDets=self.params.maxDets[1])
+            stats[15] = _summarize(0, maxDets=self.params.maxDets[2])
+            stats[16] = _summarize(0, areaRng='small', maxDets=self.params.maxDets[2])
+            stats[17] = _summarize(0, areaRng='medium', maxDets=self.params.maxDets[2])
+            stats[18] = _summarize(0, areaRng='large', maxDets=self.params.maxDets[2])
             return stats
         if not self.eval:
             raise Exception('Please run accumulate() first')
         iouType = self.params.iouType
         if iouType == 'segm' or iouType == 'bbox':
             summarize = _summarizeDets
-        elif iouType == 'keypoints':
-            summarize = _summarizeKps
         self.stats = summarize()
 
     def __str__(self):
@@ -504,29 +481,16 @@ class Params:
         self.imgIds = []
         self.catIds = []
         # np.arange causes trouble.  the data point on arange is slightly larger than the true value
-        self.iouThrs = np.linspace(.5, 0.95, np.round((0.95 - .5) / .05) + 1, endpoint=True)
+        self.iouThrs = np.linspace(.05, 0.95, np.round((0.95 - .05) / .05) + 1, endpoint=True)
         self.recThrs = np.linspace(.0, 1.00, np.round((1.00 - .0) / .01) + 1, endpoint=True)
         self.maxDets = [1, 10, 100]
         self.areaRng = [[0 ** 2, 1e5 ** 2], [0 ** 2, 32 ** 2], [32 ** 2, 96 ** 2], [96 ** 2, 1e5 ** 2]]
         self.areaRngLbl = ['all', 'small', 'medium', 'large']
         self.useCats = 1
 
-    def setKpParams(self):
-        self.imgIds = []
-        self.catIds = []
-        # np.arange causes trouble.  the data point on arange is slightly larger than the true value
-        self.iouThrs = np.linspace(.5, 0.95, np.round((0.95 - .5) / .05) + 1, endpoint=True)
-        self.recThrs = np.linspace(.0, 1.00, np.round((1.00 - .0) / .01) + 1, endpoint=True)
-        self.maxDets = [20]
-        self.areaRng = [[0 ** 2, 1e5 ** 2], [32 ** 2, 96 ** 2], [96 ** 2, 1e5 ** 2]]
-        self.areaRngLbl = ['all', 'medium', 'large']
-        self.useCats = 1
-
     def __init__(self, iouType='segm'):
         if iouType == 'segm' or iouType == 'bbox':
             self.setDetParams()
-        elif iouType == 'keypoints':
-            self.setKpParams()
         else:
             raise Exception('iouType not supported')
         self.iouType = iouType
