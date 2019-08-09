@@ -427,9 +427,10 @@ class COCOeval:
                 # dimension of precision: [TxRxKxAxM]
                 s = self.eval['precision']
                 # IoU
-                print("iouThr: {}, p.iouThrs: {}, bool cond: {}".format(int(np.round(iouThr*100)),
-                                                                        np.round(p.iouThrs*100).astype(int),
-                                                                        int(np.round(iouThr*100)) == np.round(p.iouThrs*100).astype(int)))
+                if iouThr:
+                    print("iouThr: {}, p.iouThrs: {}, bool cond: {}".format(int(np.round(iouThr*100)),
+                                                                            np.round(p.iouThrs*100).astype(int),
+                                                                            int(np.round(iouThr*100)) == np.round(p.iouThrs*100).astype(int)))
                 if iouThr is not None:
                     t = np.where(int(np.round(iouThr*100)) == np.round(p.iouThrs*100).astype(int))[0]
                     s = s[t]
