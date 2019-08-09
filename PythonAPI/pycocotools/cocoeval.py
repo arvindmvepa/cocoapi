@@ -427,16 +427,18 @@ class COCOeval:
                 # dimension of precision: [TxRxKxAxM]
                 s = self.eval['precision']
                 # IoU
-                print("iouThr: {}, p.iouThrs: {}, bool cond: {}".format(iouThr, p.iouThrs, iouThr == p.iouThrs))
+                print("iouThr: {}, p.iouThrs: {}, bool cond: {}".format(int(np.round(iouThr*100)),
+                                                                        np.round(p.iouThrs*100).astype(int),
+                                                                        int(np.round(iouThr*100)) == np.round(p.iouThrs*100).astype(int)))
                 if iouThr is not None:
-                    t = np.where(iouThr == p.iouThrs)[0]
+                    t = np.where(int(np.round(iouThr*100)) == np.round(p.iouThrs*100).astype(int))[0]
                     s = s[t]
                 s = s[:,:,:,aind,mind]
             else:
                 # dimension of recall: [TxKxAxM]
                 s = self.eval['recall']
                 if iouThr is not None:
-                    t = np.where(iouThr == p.iouThrs)[0]
+                    t = np.where(int(np.round(iouThr*100)) == np.round(p.iouThrs*100).astype(int))[0]
                     s = s[t]
                 s = s[:,:,aind,mind]
             if len(s[s>-1])==0:
