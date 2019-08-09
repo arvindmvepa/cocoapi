@@ -285,8 +285,6 @@ class COCOeval:
         if p is None:
             p = self.params
         p.catIds = p.catIds if p.useCats == 1 else [-1]
-        print("Category IDs (accumulate): {}".format(p.catIds))
-        print("IOU Thresholds (accumulate): {}".format(p.iouThrs))
         T = len(p.iouThrs)
         R = len(p.recThrs)
         K = len(p.catIds) if p.useCats else 1
@@ -301,7 +299,6 @@ class COCOeval:
         # create dictionary for future indexing
         _pe = self._paramsEval
         catIds = _pe.catIds if _pe.useCats else [-1]
-        print("Category IDs (accumulate and eval): {}".format(_pe.catIds))
         setK = set(catIds)
         setA = set(map(tuple, _pe.areaRng))
         setM = set(_pe.maxDets)
@@ -427,10 +424,6 @@ class COCOeval:
                 # dimension of precision: [TxRxKxAxM]
                 s = self.eval['precision']
                 # IoU
-                if iouThr:
-                    print("iouThr: {}, p.iouThrs: {}, bool cond: {}".format(int(np.round(iouThr*100)),
-                                                                            np.round(p.iouThrs*100).astype(int),
-                                                                            int(np.round(iouThr*100)) == np.round(p.iouThrs*100).astype(int)))
                 if iouThr is not None:
                     t = np.where(int(np.round(iouThr*100)) == np.round(p.iouThrs*100).astype(int))[0]
                     s = s[t]
